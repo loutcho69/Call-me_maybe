@@ -1,0 +1,29 @@
+[project]
+name = "call-me-maybe"
+version = "0.1.0"
+description = "Function calling with constrained decoding on Qwen3-0.6B"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.26",
+    "pydantic>=2.0",
+    "llm-sdk",
+]
+
+[tool.uv.sources]
+llm-sdk = { path = "llm_sdk", editable = true }
+
+[dependency-groups]
+dev = [
+    "flake8>=7.0",
+    "mypy>=1.10",
+]
+
+[tool.mypy]
+python_version = "3.10"
+
+exclude = ["^llm_sdk/", "^\\.venv/"]
+
+[[tool.mypy.overrides]]
+module = ["llm_sdk", "llm_sdk.*"]
+follow_imports = "skip"
+ignore_missing_imports = true
