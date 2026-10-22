@@ -9,18 +9,22 @@ dependencies = [
     "llm-sdk",
 ]
 
+# llm_sdk n'est pas sur PyPI : on dit a uv d'aller le chercher
+# dans le dossier local llm_sdk/ (copie du paquet fourni).
 [tool.uv.sources]
 llm-sdk = { path = "llm_sdk", editable = true }
 
+# Outils de developpement : installes par defaut par `uv sync`.
 [dependency-groups]
 dev = [
     "flake8>=7.0",
     "mypy>=1.10",
+    "pytest>=8.0",
 ]
 
 [tool.mypy]
 python_version = "3.10"
-
+# Le SDK fourni n'est pas type et n'est pas notre code : on ne l'analyse pas.
 exclude = ["^llm_sdk/", "^\\.venv/"]
 
 [[tool.mypy.overrides]]

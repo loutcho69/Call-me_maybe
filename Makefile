@@ -1,7 +1,7 @@
 MYPY_FLAGS = --warn-return-any --warn-unused-ignores --ignore-missing-imports \
              --disallow-untyped-defs --check-untyped-defs
 
-.PHONY: install run debug clean lint lint-strict
+.PHONY: install run debug clean lint lint-strict test check-vocab
 
 install:
 	uv sync
@@ -23,3 +23,9 @@ lint:
 lint-strict:
 	uv run flake8 .
 	uv run mypy . --strict
+
+test:
+	uv run pytest -q
+
+check-vocab:
+	uv run python -m scripts.check_vocab
