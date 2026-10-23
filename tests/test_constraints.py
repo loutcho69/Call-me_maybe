@@ -138,7 +138,7 @@ def test_number_max_length() -> None:
 
 def test_string_simple_close() -> None:
     """Text then a closing quote."""
-    string = StringConstraint()
+    string = StringConstraint(opened=True)
     string.advance(b"hello world")
     string.advance(b'"}')
     assert string.done and string.value() == "hello world"
@@ -146,7 +146,7 @@ def test_string_simple_close() -> None:
 
 def test_string_escaped_quote() -> None:
     """A quote inside the text must be written ``\\"``."""
-    string = StringConstraint()
+    string = StringConstraint(opened=True)
     string.advance(b"\\")
     assert string.escape
     string.advance(b'"')  # escaped: does not close
@@ -158,9 +158,9 @@ def test_string_escaped_quote() -> None:
 
 def test_string_regex_backslash() -> None:
     r"""The regex ``\d`` must be written ``\\d``; ``\d`` is invalid JSON."""
-    raw = StringConstraint()
+    raw = StringConstraint(opened=True)
     assert not raw.allows(b"\\d")
-    good = StringConstraint()
+    good = StringConstraint(opened=True)
     good.advance(b"\\")
     good.advance(b"\\d")
     good.advance(b'"')
@@ -169,7 +169,7 @@ def test_string_regex_backslash() -> None:
 
 def test_string_rejects_control_and_bad_tail() -> None:
     """Raw newline inside a string, or text after the close: refused."""
-    string = StringConstraint()
+    string = StringConstraint(opened=True)
     assert not string.allows(b"\n")
     assert not string.allows(b'"x')
     assert string.allows(b'",')
@@ -177,7 +177,7 @@ def test_string_rejects_control_and_bad_tail() -> None:
 
 def test_string_max_bytes(tiny: TokenIndex) -> None:
     """When full, only closing tokens remain."""
-    string = StringConstraint(max_bytes=2)
+    string = StringConstraint(max_bytes=2, opened=True)
     string.advance(b"a")
     string.advance(b"b")
     assert allowed_tokens(string, tiny) == {b'"', b'",', b'"}'}
@@ -186,7 +186,7 @@ def test_string_max_bytes(tiny: TokenIndex) -> None:
 
 def test_string_utf8() -> None:
     """Accents written byte by byte come back as text."""
-    string = StringConstraint()
+    string = StringConstraint(opened=True)
     for byte in "é".encode("utf-8"):
         string.advance(bytes([byte]))
     string.advance(b'"')
@@ -199,7 +199,7 @@ def test_string_utf8() -> None:
 def test_boolean(tiny: TokenIndex) -> None:
     """``fal`` + ``se`` gives False; anything else is refused."""
     boolean = BooleanConstraint()
-    assert allowed_tokens(boolean, tiny) == {b"true", b"fal"}
+    assert allowed_tokens(boolean, tiny) == {b"true", b"fal", b" "}
     boolean.advance(b"fal")
     assert not boolean.allows(b"x")
     boolean.advance(b"se")
@@ -212,6 +212,30 @@ def test_factory() -> None:
     assert isinstance(make_value_constraint("boolean"), BooleanConstraint)
     integer = make_value_constraint("integer")
     assert isinstance(integer, NumberConstraint) and integer.integer
+
+
+def test_value_start_natural_tokens() -> None:
+    """After ``:`` the model may use ``" -"``, ``' "*'`` or ``" true"``."""
+    number = NumberConstraint()
+    number.advance(b" -")
+    assert not number.allows(b" ")  # une seule espace
+    number.advance(b"8")
+    number.advance(b",")
+    assert number.value() == -8.0
+    string = StringConstraint()
+    assert not string.allows(b"x")  # il faut d'abord le guillemet
+    string.advance(b' "*')
+    string.advance(b'"')
+    assert string.value() == "*"
+    boolean = BooleanConstraint()
+    boolean.advance(b" true")
+    assert boolean.done and boolean.value() is True
+
+
+def test_value_start_mask(tiny: TokenIndex) -> None:
+    """Before a string: only a space or a token opening the quote."""
+    allowed = allowed_tokens(StringConstraint(), tiny)
+    assert allowed == {b'"', b" ", b'",', b'"}', b'"x'}
 
 
 # ------------------------------------------------- real vocabulary, random

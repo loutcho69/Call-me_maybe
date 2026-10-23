@@ -28,8 +28,10 @@ TERMINATORS = b",} \n\r\t"
 # Lettres autorisees apres un antislash dans une chaine JSON.
 # \u est volontairement exclu : le modele ecrit les accents directement.
 ESCAPABLE = b'"\\/bfnrt'
+NUMERIC = b"0123456789.-"
 QUOTE = ord('"')
 BACKSLASH = ord("\\")
+SPACE = ord(" ")
 
 
 class TokenIndex(BaseModel):
@@ -43,6 +45,8 @@ class TokenIndex(BaseModel):
             no backslash, no control character).
         ends_value: Tokens whose first byte ends a number or boolean.
         numeric_ids: Tokens made only of digits, ``.`` and ``-``.
+        space_numeric_ids: A space followed by numeric characters
+            (``" -"``, ``" "``): how a value naturally starts after ``:``.
         string_tricky_ids: Tokens containing a quote or a backslash.
         escape_start_ids: Tokens that may follow a backslash.
     """
@@ -55,6 +59,7 @@ class TokenIndex(BaseModel):
     plain_text: BoolArray
     ends_value: BoolArray
     numeric_ids: list[int]
+    space_numeric_ids: list[int]
     string_tricky_ids: list[int]
     escape_start_ids: list[int]
 
@@ -79,6 +84,7 @@ class TokenIndex(BaseModel):
         plain_text = np.zeros(size, dtype=np.bool_)
         ends_value = np.zeros(size, dtype=np.bool_)
         numeric_ids: list[int] = []
+        space_numeric_ids: list[int] = []
         tricky_ids: list[int] = []
         escape_ids: list[int] = []
         for token_id, data in enumerate(vocab.token_bytes):
@@ -95,8 +101,10 @@ class TokenIndex(BaseModel):
                 ends_value[token_id] = True
             if data[0] in ESCAPABLE:
                 escape_ids.append(token_id)
-            if all(byte in b"0123456789.-" for byte in data):
+            if all(byte in NUMERIC for byte in data):
                 numeric_ids.append(token_id)
+            elif data[0] == SPACE and all(b in NUMERIC for b in data[1:]):
+                space_numeric_ids.append(token_id)
         return cls(
             token_bytes=vocab.token_bytes,
             by_bytes=by_bytes,
@@ -104,6 +112,7 @@ class TokenIndex(BaseModel):
             plain_text=plain_text,
             ends_value=ends_value,
             numeric_ids=numeric_ids,
+            space_numeric_ids=space_numeric_ids,
             string_tricky_ids=tricky_ids,
             escape_start_ids=escape_ids,
         )
@@ -268,34 +277,42 @@ class NameConstraint(Constraint):
 
 
 class NumberConstraint(Constraint):
-    """A JSON number (or integer): ``-?digits(.digits)?``.
+    """A JSON number (or integer): `` ?-?digits(.digits)?``.
+
+    The value is written right after ``:``, so one leading space is
+    accepted: the model can then use its natural tokens such as ``" -"``.
 
     Attributes:
         integer: True for the ``integer`` type (no decimal point).
         max_length: Maximum number of characters.
-        text: Characters written so far.
+        text: Characters written so far (without the leading space).
+        spaced: True once the optional leading space was written.
     """
 
     integer: bool = False
     max_length: int = 24
     text: str = ""
+    spaced: bool = False
 
     def _complete(self, text: str) -> bool:
         """A number needs at least one digit."""
         return any(char.isdigit() for char in text)
 
-    def _scan(self, data: bytes) -> tuple[str, bool] | None:
+    def _scan(self, data: bytes) -> tuple[str, bool, bool] | None:
         """Apply bytes to the text without changing the state.
 
         Returns:
-            (new text, finished) or None if not allowed.
+            (new text, spaced, finished) or None if not allowed.
         """
         if not data:
             return None
-        text = self.text
+        text, spaced = self.text, self.spaced
         for byte in data:
+            if byte == SPACE and not text and not spaced:
+                spaced = True
+                continue
             if byte in TERMINATORS:
-                return (text, True) if self._complete(text) else None
+                return (text, spaced, True) if self._complete(text) else None
             char = chr(byte)
             if byte in DIGITS:
                 text += char
@@ -308,7 +325,7 @@ class NumberConstraint(Constraint):
                 return None
             if len(text) > self.max_length:
                 return None
-        return text, False
+        return text, spaced, False
 
     def allows(self, data: bytes) -> bool:
         """See Constraint.allows."""
@@ -319,11 +336,14 @@ class NumberConstraint(Constraint):
         result = self._scan(data)
         if result is None:
             raise ValueError(f"token {data!r} not allowed in a number")
-        self.text, self.done = result
+        self.text, self.spaced, self.done = result
 
     def mask(self, index: TokenIndex) -> BoolArray:
         """Digits that fit, plus any terminator once a digit exists."""
-        result = self._check(index, index.numeric_ids)
+        candidates = index.numeric_ids
+        if not self.text and not self.spaced:
+            candidates = candidates + index.space_numeric_ids
+        result = self._check(index, candidates)
         if self._complete(self.text):
             result |= index.ends_value
         return result
@@ -336,32 +356,48 @@ class NumberConstraint(Constraint):
 
 
 class StringConstraint(Constraint):
-    """A JSON string body, written after an opening quote we add.
+    """A JSON string, written right after ``:``.
 
-    ``content`` holds the JSON-escaped bytes (``\\"`` stays two bytes);
-    ``value()`` turns them into the real text with ``json.loads``.
+    The model writes an optional space and the opening quote itself, so
+    it can use its natural tokens (``" \\"*"`` is one Qwen token).
+    ``content`` holds the JSON-escaped bytes between the quotes
+    (``\\"`` stays two bytes); ``value()`` decodes them with json.
 
     Attributes:
         max_bytes: Maximum length of the escaped content.
         content: Escaped bytes written so far.
         escape: True right after a backslash.
+        opened: True once the opening quote was written.
+        spaced: True once the optional leading space was written.
     """
 
     max_bytes: int = 200
     content: bytes = b""
     escape: bool = False
+    opened: bool = False
+    spaced: bool = False
 
-    def _scan(self, data: bytes) -> tuple[bytes, bool, bool] | None:
+    def _scan(
+        self, data: bytes
+    ) -> tuple[bytes, bool, bool, bool, bool] | None:
         """Apply bytes without changing the state.
 
         Returns:
-            (new content, escape pending, finished) or None.
+            (content, escape, opened, spaced, finished) or None.
         """
         if not data:
             return None
         content, escape = self.content, self.escape
+        opened, spaced = self.opened, self.spaced
         for position, byte in enumerate(data):
-            if escape:
+            if not opened:
+                if byte == SPACE and not spaced:
+                    spaced = True
+                elif byte == QUOTE:
+                    opened = True
+                else:
+                    return None
+            elif escape:
                 if byte not in ESCAPABLE:
                     return None
                 content += bytes([byte])
@@ -369,7 +405,7 @@ class StringConstraint(Constraint):
             elif byte == QUOTE:
                 if not _tail_is_closing(data[position + 1:]):
                     return None
-                return content, False, True
+                return content, False, True, spaced, True
             elif byte == BACKSLASH:
                 # Il faut la place pour l'antislash et la lettre qui suit.
                 if len(content) + 2 > self.max_bytes:
@@ -382,7 +418,7 @@ class StringConstraint(Constraint):
                 content += bytes([byte])
             if len(content) > self.max_bytes:
                 return None
-        return content, escape, False
+        return content, escape, opened, spaced, False
 
     def allows(self, data: bytes) -> bool:
         """See Constraint.allows."""
@@ -393,10 +429,18 @@ class StringConstraint(Constraint):
         result = self._scan(data)
         if result is None:
             raise ValueError(f"token {data!r} not allowed in a string")
-        self.content, self.escape, self.done = result
+        (self.content, self.escape, self.opened, self.spaced,
+         self.done) = result
 
     def mask(self, index: TokenIndex) -> BoolArray:
         """Plain text that fits, plus checked quote/backslash tokens."""
+        if not self.opened:
+            # Avant le guillemet : seuls " ou un espace peuvent venir.
+            result = self._check(index, index.string_tricky_ids)
+            space_id = index.by_bytes.get(b" ")
+            if space_id is not None and not self.spaced:
+                result[space_id] = True
+            return result
         if self.escape:
             return self._check(index, index.escape_start_ids)
         room = self.max_bytes - len(self.content)
@@ -406,35 +450,45 @@ class StringConstraint(Constraint):
 
     def value(self) -> str:
         """Decode the escaped content into the real string."""
+        content = self.content
+        if self.escape:
+            content = content[:-1]  # antislash orphelin si on a coupe
         # 'ignore' retire un eventuel demi-caractere coupe par la limite.
-        text = self.content.decode("utf-8", errors="ignore")
+        text = content.decode("utf-8", errors="ignore")
         decoded = json.loads('"' + text + '"')
         return str(decoded)
 
 
 class BooleanConstraint(Constraint):
-    """``true`` or ``false``.
+    """``true`` or ``false``, with one optional leading space.
 
     Attributes:
-        content: Bytes written so far.
+        content: Bytes of the word written so far.
+        spaced: True once the optional leading space was written.
     """
 
     content: bytes = b""
+    spaced: bool = False
 
-    def _scan(self, data: bytes) -> tuple[bytes, bool] | None:
+    def _scan(self, data: bytes) -> tuple[bytes, bool, bool] | None:
         """Apply bytes without changing the state.
 
         Returns:
-            (new content, finished) or None.
+            (new content, spaced, finished) or None.
         """
         if not data:
             return None
+        spaced = self.spaced
+        if not self.content and not spaced and data[0] == SPACE:
+            spaced, data = True, data[1:]
+            if not data:
+                return b"", True, False
         new = self.content + data
         for word in (b"true", b"false"):
             if word.startswith(new):
-                return new, new == word
+                return new, spaced, new == word
             if new.startswith(word) and _tail_is_closing(new[len(word):]):
-                return word, True
+                return word, spaced, True
         return None
 
     def allows(self, data: bytes) -> bool:
@@ -446,19 +500,25 @@ class BooleanConstraint(Constraint):
         result = self._scan(data)
         if result is None:
             raise ValueError(f"token {data!r} not allowed in a boolean")
-        self.content, self.done = result
+        self.content, self.spaced, self.done = result
 
     def mask(self, index: TokenIndex) -> BoolArray:
         """Tokens equal to a prefix of the rest of true / false."""
         result = index.empty_mask()
+        starts = [b""]
+        if not self.content and not self.spaced:
+            starts.append(b" ")  # " true" est un seul token chez Qwen
         for word in (b"true", b"false"):
             if not word.startswith(self.content):
                 continue
             rest = word[len(self.content):]
-            for end in range(1, len(rest) + 1):
-                token_id = index.by_bytes.get(rest[:end])
-                if token_id is not None:
-                    result[token_id] = True
+            for start in starts:
+                # Avec l'espace devant, le token " " seul compte aussi.
+                first = 0 if start else 1
+                for end in range(first, len(rest) + 1):
+                    token_id = index.by_bytes.get(start + rest[:end])
+                    if token_id is not None:
+                        result[token_id] = True
         return result
 
     def value(self) -> bool:
