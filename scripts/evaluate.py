@@ -54,11 +54,13 @@ class SetResult(BaseModel):
         correct: Number of exact answers.
         total: Number of cases.
         seconds: Time spent.
+        model_calls: Number of logits computations.
     """
 
     correct: int = 0
     total: int = 0
     seconds: float = 0.0
+    model_calls: int = 0
 
 
 def load_cases(path: Path) -> list[EvalCase]:
@@ -146,6 +148,7 @@ def run_set(
         else:
             result.correct += 1
     result.seconds = time.perf_counter() - start
+    result.model_calls = generator.stats.model_calls
     return result
 
 
@@ -158,6 +161,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--styles", default=",".join(PROMPT_STYLES))
     parser.add_argument("--sets", default=",".join(EVAL_SETS))
+    parser.add_argument("--device", default=None,
+                        help="force cpu / mps / cuda (default: SDK choice)")
     args = parser.parse_args()
     styles = args.styles.split(",")
     sets = args.sets.split(",")
@@ -167,7 +172,7 @@ def main() -> int:
         print(f"Error: unknown style or set: {unknown}", file=sys.stderr)
         return 1
     try:
-        model, index = load_engine()
+        model, index = load_engine(args.device)
     except ValueError as err:
         print(f"Error: {err}", file=sys.stderr)
         return 1
@@ -188,6 +193,14 @@ def main() -> int:
         correct = sum(r.correct for r in results.values())
         total = sum(r.total for r in results.values())
         print(f"{style:<10} {cells}  {100 * correct / total:5.1f} %")
+
+    print("\nstyle      model calls   s/prompt   calls/prompt")
+    for style, results in table.items():
+        prompts = sum(r.total for r in results.values())
+        calls = sum(r.model_calls for r in results.values())
+        seconds = sum(r.seconds for r in results.values())
+        print(f"{style:<10} {calls:>11}   {seconds / prompts:8.2f}"
+              f"   {calls / prompts:12.1f}")
     return 0
 
 

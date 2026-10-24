@@ -12,7 +12,9 @@ by the program.
 from src.models import FunctionDefinition
 
 PROMPT_STYLES = ("basic", "rules", "examples")
-DEFAULT_STYLE = "rules"
+# Mesure du 22/10 sur 36 cas : basic 97,2 %, rules 94,4 %,
+# examples 91,7 %. Le plus simple est aussi le plus precis et rapide.
+DEFAULT_STYLE = "basic"
 
 _RULES = (
     "Rules:\n"

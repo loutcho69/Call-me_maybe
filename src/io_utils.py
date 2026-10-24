@@ -1,6 +1,7 @@
 """Reading, validating and writing the JSON files of the project."""
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -68,11 +69,14 @@ def _format_validation_error(path: Path, err: ValidationError) -> str:
 def load_functions(path: Path) -> list[FunctionDefinition]:
     """Load and validate the function definitions file.
 
+    A function with a parameter type the decoder cannot generate (e.g.
+    ``array``) is skipped with a warning instead of rejecting the file.
+
     Args:
         path: Path to functions_definition.json.
 
     Returns:
-        The validated list of functions.
+        The validated, usable functions.
 
     Raises:
         ValueError: On any reading, JSON or schema problem.
@@ -90,7 +94,24 @@ def load_functions(path: Path) -> list[FunctionDefinition]:
         raise ValueError(
             f"duplicate function names in {path}: {', '.join(duplicates)}"
         )
-    return functions
+    usable = []
+    for function in functions:
+        unsupported = function.unsupported_parameters()
+        if unsupported:
+            # Une fonction non generable ne doit pas bloquer les autres.
+            types = ", ".join(
+                f"{p}: {function.parameters[p].type}" for p in unsupported
+            )
+            print(
+                f"Warning: skipping {function.name} "
+                f"(unsupported parameter type: {types})",
+                file=sys.stderr,
+            )
+        else:
+            usable.append(function)
+    if not usable:
+        raise ValueError(f"no usable function in {path}")
+    return usable
 
 
 def load_prompts(path: Path) -> list[PromptItem]:
@@ -110,6 +131,27 @@ def load_prompts(path: Path) -> list[PromptItem]:
         return _PROMPTS_ADAPTER.validate_python(raw)
     except ValidationError as err:
         raise ValueError(_format_validation_error(path, err)) from None
+
+
+def ensure_writable(path: Path) -> None:
+    """Check early that the output file can be written.
+
+    Called before loading the model, so a wrong ``--output`` is reported
+    at once instead of after minutes of generation. The folder is created
+    if needed; an existing file is left untouched (append mode).
+
+    Args:
+        path: Future output file.
+
+    Raises:
+        ValueError: If the file cannot be created or opened for writing.
+    """
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8"):
+            pass
+    except OSError as err:
+        raise ValueError(f"cannot write {path}: {err.strerror}") from None
 
 
 def write_calls(path: Path, calls: list[FunctionCall]) -> None:

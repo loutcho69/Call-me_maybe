@@ -1,6 +1,3 @@
-MYPY_FLAGS = --warn-return-any --warn-unused-ignores --ignore-missing-imports \
-             --disallow-untyped-defs --check-untyped-defs
-
 .PHONY: install run debug clean lint lint-strict test check-vocab evaluate
 
 install:
@@ -18,7 +15,8 @@ clean:
 
 lint:
 	uv run flake8 .
-	uv run mypy . $(MYPY_FLAGS)
+	uv run mypy . --warn-return-any --warn-unused-ignores \
+		--ignore-missing-imports --disallow-untyped-defs --check-untyped-defs
 
 lint-strict:
 	uv run flake8 .

@@ -27,11 +27,20 @@ class GenerationStats(BaseModel):
 
     Attributes:
         model_calls: Number of logits computations.
+        sequence_tokens: Sum of the sequence lengths sent to the model
+            (the cost of a call grows with it: the SDK has no cache).
         forced_bytes: Bytes written without asking the model.
     """
 
     model_calls: int = 0
+    sequence_tokens: int = 0
     forced_bytes: int = 0
+
+    def average_length(self) -> float:
+        """Average number of tokens per model call (0 if no call)."""
+        if self.model_calls == 0:
+            return 0.0
+        return self.sequence_tokens / self.model_calls
 
 
 class Generator(BaseModel):
@@ -144,6 +153,7 @@ class Generator(BaseModel):
             raise ValueError("no valid token left (dead end)")
         logits = self.model.logits(ids)
         self.stats.model_calls += 1
+        self.stats.sequence_tokens += len(ids)
         if logits.shape[0] != mask.shape[0]:
             raise ValueError(
                 f"model returned {logits.shape[0]} logits, "

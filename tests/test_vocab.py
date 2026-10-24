@@ -32,6 +32,7 @@ def test_token_to_bytes() -> None:
 
 
 def _write(path: Path, data: object) -> Path:
+    """Write data as JSON to a file and return its path."""
     path.write_text(json.dumps(data), encoding="utf-8")
     return path
 

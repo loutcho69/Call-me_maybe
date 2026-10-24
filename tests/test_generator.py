@@ -117,8 +117,11 @@ def fake_loader(tmp_path: Path) -> LanguageModel:
 def test_cli_end_to_end(tmp_path: Path,
                         monkeypatch: pytest.MonkeyPatch) -> None:
     """The CLI writes one valid entry per prompt, output folder created."""
-    monkeypatch.setattr(LanguageModel, "load",
-                        classmethod(lambda cls: fake_loader(tmp_path)))
+    def load(cls: type, device: str | None = None) -> LanguageModel:
+        """Fake LanguageModel.load returning the tiny fake model."""
+        return fake_loader(tmp_path)
+
+    monkeypatch.setattr(LanguageModel, "load", classmethod(load))
     output = tmp_path / "new_dir" / "calls.json"
     assert cli.main(["--output", str(output)]) == 0
     data = json.loads(output.read_text(encoding="utf-8"))
@@ -130,7 +133,8 @@ def test_cli_end_to_end(tmp_path: Path,
 def test_cli_no_prompt_skips_model(tmp_path: Path,
                                    monkeypatch: pytest.MonkeyPatch) -> None:
     """Zero prompt: empty output, the model is never loaded."""
-    def boom(cls: type) -> LanguageModel:
+    def boom(cls: type, device: str | None = None) -> LanguageModel:
+        """Fake LanguageModel.load that must never be called."""
         raise AssertionError("model should not be loaded")
 
     monkeypatch.setattr(LanguageModel, "load", classmethod(boom))
@@ -145,7 +149,8 @@ def test_cli_model_load_failure(tmp_path: Path,
                                 monkeypatch: pytest.MonkeyPatch,
                                 capsys: pytest.CaptureFixture[str]) -> None:
     """A model that cannot load gives a clean error and exit code 1."""
-    def fail(cls: type) -> LanguageModel:
+    def fail(cls: type, device: str | None = None) -> LanguageModel:
+        """Fake LanguageModel.load simulating a network failure."""
         raise ValueError("cannot load model 'x': no network")
 
     monkeypatch.setattr(LanguageModel, "load", classmethod(fail))

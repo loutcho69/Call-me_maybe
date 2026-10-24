@@ -26,7 +26,9 @@ class LanguageModel(BaseModel):
     backend: Any
 
     @classmethod
-    def load(cls, model_name: str = DEFAULT_MODEL) -> "LanguageModel":
+    def load(
+        cls, model_name: str = DEFAULT_MODEL, device: str | None = None
+    ) -> "LanguageModel":
         """Load the real model through the SDK.
 
         The SDK is imported here and not at the top of the file: importing
@@ -35,6 +37,8 @@ class LanguageModel(BaseModel):
 
         Args:
             model_name: Hugging Face identifier of the model.
+            device: ``"cpu"``, ``"cuda"``, ``"mps"``, or None to let the
+                SDK pick the fastest one (public SDK parameter).
 
         Returns:
             A ready to use LanguageModel.
@@ -45,7 +49,7 @@ class LanguageModel(BaseModel):
         try:
             from llm_sdk import Small_LLM_Model
 
-            backend = Small_LLM_Model(model_name)
+            backend = Small_LLM_Model(model_name, device=device)
         except Exception as err:  # the SDK can fail in many ways
             raise ValueError(
                 f"cannot load model {model_name!r}: {err}"

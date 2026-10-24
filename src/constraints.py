@@ -17,7 +17,7 @@ import numpy as np
 import numpy.typing as npt
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.models import ArgValue, ParamType
+from src.models import ArgValue
 from src.vocab import Vocabulary
 
 BoolArray = npt.NDArray[np.bool_]
@@ -290,7 +290,7 @@ class NumberConstraint(Constraint):
     """
 
     integer: bool = False
-    max_length: int = 24
+    max_length: int = 40
     text: str = ""
     spaced: bool = False
 
@@ -526,14 +526,17 @@ class BooleanConstraint(Constraint):
         return self.content == b"true"
 
 
-def make_value_constraint(param_type: ParamType) -> Constraint:
+def make_value_constraint(param_type: str) -> Constraint:
     """Create the constraint matching a parameter type.
 
     Args:
-        param_type: JSON type from the function definition.
+        param_type: Normalized JSON type from the function definition.
 
     Returns:
         A fresh constraint in its initial state.
+
+    Raises:
+        ValueError: If the type cannot be generated.
     """
     if param_type == "number":
         return NumberConstraint()
@@ -541,4 +544,6 @@ def make_value_constraint(param_type: ParamType) -> Constraint:
         return NumberConstraint(integer=True)
     if param_type == "boolean":
         return BooleanConstraint()
-    return StringConstraint()
+    if param_type == "string":
+        return StringConstraint()
+    raise ValueError(f"unsupported parameter type {param_type!r}")

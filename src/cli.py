@@ -7,7 +7,12 @@ from pathlib import Path
 
 from src.constraints import TokenIndex
 from src.generator import Generator
-from src.io_utils import load_functions, load_prompts, write_calls
+from src.io_utils import (
+    ensure_writable,
+    load_functions,
+    load_prompts,
+    write_calls,
+)
 from src.llm import LanguageModel
 from src.models import FunctionCall, FunctionDefinition, PromptItem
 from src.vocab import load_vocabulary
@@ -51,8 +56,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def load_engine() -> tuple[LanguageModel, TokenIndex]:
+def load_engine(
+    device: str | None = None,
+) -> tuple[LanguageModel, TokenIndex]:
     """Load the model and the token index the constrained decoding needs.
+
+    Args:
+        device: Force a device (``"cpu"``...), None for the SDK default.
 
     Returns:
         The model and the token index.
@@ -61,7 +71,7 @@ def load_engine() -> tuple[LanguageModel, TokenIndex]:
         ValueError: If the model or its tokenizer files cannot be loaded.
     """
     print("Loading model...", file=sys.stderr)
-    model = LanguageModel.load()
+    model = LanguageModel.load(device=device)
     size = len(model.logits(model.encode("hi")))
     vocab = load_vocabulary(model.vocab_path(), model.tokenizer_path(), size)
     return model, TokenIndex.build(vocab)
@@ -131,13 +141,16 @@ def main(argv: list[str] | None = None) -> int:
         start = time.perf_counter()
         functions = load_functions(args.functions_definition)
         prompts = load_prompts(args.input)
+        ensure_writable(args.output)  # avant les minutes de generation
         calls: list[FunctionCall] = []
         if prompts:  # pas de prompt : inutile de charger le modele
             generator = build_generator(functions)
             calls = run_prompts(generator, prompts)
+            stats = generator.stats
             print(
-                f"Model calls: {generator.stats.model_calls}, "
-                f"forced bytes: {generator.stats.forced_bytes}",
+                f"Model calls: {stats.model_calls}, "
+                f"average sequence: {stats.average_length():.0f} tokens, "
+                f"forced bytes: {stats.forced_bytes}",
                 file=sys.stderr,
             )
         write_calls(args.output, calls)
@@ -151,4 +164,10 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("\nInterrupted.", file=sys.stderr)
         return 130
+    except Exception as err:  # filet de securite : jamais de traceback
+        print(
+            f"Unexpected error ({type(err).__name__}): {err}",
+            file=sys.stderr,
+        )
+        return 1
     return 0
