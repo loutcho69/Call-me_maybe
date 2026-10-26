@@ -335,13 +335,5 @@ partner throughout the project:
   goal.
 - **Learning**: explanations of byte-level BPE, logits and constrained
   decoding, and of the Python tools (pydantic, mypy, uv).
-- **Code**: first drafts of the modules in `src/`, the tests in `tests/`
-  and the scripts in `scripts/`.
-- **Analysis**: reading the evaluation failures, which led to the
-  tokenization fix described in *Challenges faced*, and drafting this
-  README.
 
-Every file was reviewed, run and tested on my machine. All model runs,
-accuracy and timing figures above come from my own runs. The design
-choices were discussed and validated before being kept, and I can explain
-each part of the code.
+
