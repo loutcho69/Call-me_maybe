@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# Outils
+.mypy_cache/
+.pytest_cache/
+
+# Sortie generee pendant la correction (ne doit pas etre rendue)
+data/output/
